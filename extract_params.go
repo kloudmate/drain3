@@ -15,9 +15,9 @@ type ExtractedParameter struct {
 
 // ParameterExtractor extracts variable values from log messages given a template.
 type ParameterExtractor struct {
-	masker          *LogMasker
-	extraDelimiters []string
-	cache           sync.Map // map[string]*extractionRegex
+	masker                *LogMasker
+	extraDelimiterRegexps []*regexp.Regexp
+	cache                 sync.Map // map[string]*extractionRegex
 }
 
 type extractionRegex struct {
@@ -26,10 +26,19 @@ type extractionRegex struct {
 }
 
 // NewParameterExtractor creates a new ParameterExtractor.
+// Extra delimiters are treated as regex patterns, consistent with Drain's tokenization.
 func NewParameterExtractor(masker *LogMasker, extraDelimiters []string) *ParameterExtractor {
+	var delimRegexps []*regexp.Regexp
+	for _, delim := range extraDelimiters {
+		re, err := regexp.Compile(delim)
+		if err != nil {
+			re = regexp.MustCompile(regexp.QuoteMeta(delim))
+		}
+		delimRegexps = append(delimRegexps, re)
+	}
 	return &ParameterExtractor{
-		masker:          masker,
-		extraDelimiters: extraDelimiters,
+		masker:                masker,
+		extraDelimiterRegexps: delimRegexps,
 	}
 }
 
@@ -38,8 +47,8 @@ func NewParameterExtractor(masker *LogMasker, extraDelimiters []string) *Paramet
 // to capture parameter values more accurately.
 // Returns nil if the message does not match the template.
 func (pe *ParameterExtractor) ExtractParameters(logTemplate, logMessage string, exactMatching bool) []ExtractedParameter {
-	for _, delim := range pe.extraDelimiters {
-		logMessage = strings.ReplaceAll(logMessage, delim, " ")
+	for _, re := range pe.extraDelimiterRegexps {
+		logMessage = re.ReplaceAllString(logMessage, " ")
 	}
 
 	cacheKey := logTemplate
@@ -71,7 +80,7 @@ func (pe *ParameterExtractor) ExtractParameters(logTemplate, logMessage string, 
 			continue
 		}
 		params = append(params, ExtractedParameter{
-			Value:    matches[i],
+			Value:    strings.TrimSpace(matches[i]),
 			MaskName: maskName,
 		})
 	}

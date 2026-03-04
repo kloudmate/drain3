@@ -277,6 +277,11 @@ func (d *Drain) getSeqDistance(seq1, seq2 []string, includeParams bool) (float64
 		return 0, 0
 	}
 
+	// Empty sequences are a perfect match
+	if len(seq1) == 0 {
+		return 1.0, 0
+	}
+
 	simTokens := 0
 	paramCount := 0
 	for i, token1 := range seq1 {
@@ -290,10 +295,7 @@ func (d *Drain) getSeqDistance(seq1, seq2 []string, includeParams bool) (float64
 		}
 	}
 
-	retVal := float64(0)
-	if len(seq1) > 0 {
-		retVal = float64(simTokens) / float64(len(seq1))
-	}
+	retVal := float64(simTokens) / float64(len(seq1))
 
 	if includeParams {
 		retVal = float64(simTokens+paramCount) / float64(len(seq1))
@@ -542,8 +544,10 @@ func (d *Drain) unmarshalStateUnlocked(data []byte) error {
 		store = newMapStore()
 	}
 
-	for _, cluster := range state.IDToCluster {
-		store.Put(cluster)
+	// Restore in reverse order: Values() is serialized MRU-first, but Put()
+	// pushes to front, so inserting in reverse preserves the original LRU order.
+	for i := len(state.IDToCluster) - 1; i >= 0; i-- {
+		store.Put(state.IDToCluster[i])
 	}
 	d.IDToCluster = store
 

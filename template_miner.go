@@ -3,6 +3,7 @@ package drain3
 import (
 	"bytes"
 	"compress/zlib"
+	"fmt"
 	"io"
 	"strconv"
 	"time"
@@ -12,6 +13,8 @@ import (
 type AddLogMessageResult struct {
 	Cluster    *LogCluster
 	ChangeType ChangeType
+	// SaveError is non-nil if auto-saving state to persistence failed.
+	SaveError error
 }
 
 // TemplateMiner is the high-level API that integrates Drain, masking, persistence, and profiling.
@@ -40,7 +43,7 @@ func NewTemplateMiner(persistence PersistenceHandler, config *Config) (*Template
 	}
 
 	drainCfg := DrainConfig{
-		SimTh:                    config.Drain.SimTh,
+		SimTh:                    config.Drain.GetSimTh(),
 		Depth:                    config.Drain.Depth,
 		MaxChildren:              config.Drain.MaxChildren,
 		MaxClusters:              config.Drain.MaxClusters,
@@ -82,8 +85,13 @@ func NewTemplateMiner(persistence PersistenceHandler, config *Config) (*Template
 	// Load saved state if available
 	if persistence != nil {
 		if err := tm.LoadState(); err != nil {
-			// Non-fatal: just start fresh
-			_ = err
+			clearer, ok := persistence.(StateClearer)
+			if !ok {
+				return nil, err
+			}
+			if clearErr := clearer.ClearState(); clearErr != nil {
+				return nil, fmt.Errorf("load state: %w; clear state: %v", err, clearErr)
+			}
 		}
 	}
 
@@ -104,11 +112,12 @@ func (tm *TemplateMiner) AddLogMessage(message string) *AddLogMessageResult {
 	tm.Profiler.EndSection("drain")
 
 	// Auto-save: on any change, or periodically
+	var saveErr error
 	if tm.Persistence != nil {
 		snapshotReason := tm.getSnapshotReason(changeType, cluster.ClusterID)
 		if snapshotReason != "" {
 			tm.Profiler.StartSection("save_state")
-			_ = tm.saveStateInternal()
+			saveErr = tm.saveStateInternal()
 			tm.Profiler.EndSection("save_state")
 		}
 	}
@@ -116,6 +125,7 @@ func (tm *TemplateMiner) AddLogMessage(message string) *AddLogMessageResult {
 	return &AddLogMessageResult{
 		Cluster:    cluster,
 		ChangeType: changeType,
+		SaveError:  saveErr,
 	}
 }
 

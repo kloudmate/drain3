@@ -285,6 +285,35 @@ func TestExtraDelimitersRegex(t *testing.T) {
 	}
 }
 
+func TestExtractParametersWithRegexExtraDelimiters(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Drain.ExtraDelimiters = []string{`[\[\]]`}
+	cfg.Drain.SimTh = 0.3
+
+	tm, err := NewTemplateMiner(nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tm.AddLogMessage("status=[200] path=/a")
+	result := tm.AddLogMessage("status=[500] path=/a")
+	if result.ChangeType != ChangeClusterTemplateChanged {
+		t.Fatalf("expected template change, got %v", result.ChangeType)
+	}
+
+	pe := NewParameterExtractor(tm.Masker, tm.Config.Drain.ExtraDelimiters)
+	params := pe.ExtractParameters(result.Cluster.GetTemplate(), "status=[404] path=/a", false)
+	if params == nil {
+		t.Fatal("expected extracted params")
+	}
+	if len(params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(params))
+	}
+	if params[0].Value != "404" {
+		t.Fatalf("expected param value '404', got %q", params[0].Value)
+	}
+}
+
 func TestParamStrDerivedFromMaskPrefixSuffix(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Masking.MaskPrefix = "{{"
@@ -339,5 +368,46 @@ func TestTemplateMinerProfiler(t *testing.T) {
 	report := tm.GetProfilerReport(false)
 	if report == "" {
 		t.Fatal("expected non-empty profiler report")
+	}
+}
+
+type brokenPersistence struct{}
+
+func (b *brokenPersistence) SaveState([]byte) error { return nil }
+func (b *brokenPersistence) LoadState() ([]byte, error) {
+	return nil, errBrokenPersistence
+}
+
+var errBrokenPersistence = &brokenPersistenceError{}
+
+type brokenPersistenceError struct{}
+
+func (e *brokenPersistenceError) Error() string { return "load failed" }
+
+func TestTemplateMinerLoadStateErrorIsReturned(t *testing.T) {
+	_, err := NewTemplateMiner(&brokenPersistence{}, DefaultConfig())
+	if err == nil {
+		t.Fatal("expected load-state error from NewTemplateMiner")
+	}
+}
+
+func TestTemplateMinerLoadStateErrorClearsAndContinues(t *testing.T) {
+	persistence := NewMemoryPersistence()
+	persistence.data = []byte("invalid-state-data")
+
+	tm, err := NewTemplateMiner(persistence, DefaultConfig())
+	if err != nil {
+		t.Fatalf("expected recovery and continue, got error: %v", err)
+	}
+	if tm == nil {
+		t.Fatal("expected non-nil miner after recovery")
+	}
+	if persistence.data != nil {
+		t.Fatal("expected corrupted state to be cleared")
+	}
+
+	result := tm.AddLogMessage("hello world")
+	if result == nil || result.Cluster == nil {
+		t.Fatal("expected miner to keep working after recovery")
 	}
 }

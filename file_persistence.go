@@ -35,3 +35,11 @@ func (f *FilePersistence) LoadState() ([]byte, error) {
 	}
 	return data, nil
 }
+
+// ClearState removes the persisted state file. Missing files are ignored.
+func (f *FilePersistence) ClearState() error {
+	if err := os.Remove(f.FilePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}

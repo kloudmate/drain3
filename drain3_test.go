@@ -180,6 +180,19 @@ func TestEmptyLogMessage(t *testing.T) {
 	}
 }
 
+func TestMatchAlwaysStrategyEmptyLogMessage(t *testing.T) {
+	drain := NewDrain(DefaultDrainConfig())
+	drain.AddLogMessage("")
+
+	cluster := drain.Match("", SearchStrategyAlways)
+	if cluster == nil {
+		t.Fatal("expected a match for empty message with always strategy")
+	}
+	if cluster.GetTemplate() != "" {
+		t.Fatalf("expected empty template, got %q", cluster.GetTemplate())
+	}
+}
+
 func TestExtraDelimiters(t *testing.T) {
 	cfg := DefaultDrainConfig()
 	cfg.ExtraDelimiters = []string{"=", ":"}
@@ -298,6 +311,39 @@ func TestDrainJSONRoundTrip(t *testing.T) {
 	}
 	if cluster.GetTemplate() != "user <*> logged in" {
 		t.Fatalf("unexpected template after restore: %q", cluster.GetTemplate())
+	}
+}
+
+func TestDrainJSONRoundTripPreservesLRUOrder(t *testing.T) {
+	cfg := DefaultDrainConfig()
+	cfg.MaxClusters = 2
+
+	drain := NewDrain(cfg)
+	c1, _ := drain.AddLogMessage("a")
+	c2, _ := drain.AddLogMessage("b c")
+	if c1 == nil || c2 == nil {
+		t.Fatal("expected initial clusters")
+	}
+
+	data, err := json.Marshal(drain)
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+
+	drain2 := NewDrain(cfg)
+	if err := drain2.UnmarshalState(data); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	// Adding a new distinct cluster should evict the original LRU ("a"),
+	// not the more recent cluster ("b c").
+	drain2.AddLogMessage("d e f")
+
+	if got := drain2.Match("a", SearchStrategyNever); got != nil {
+		t.Fatalf("expected cluster 'a' to be evicted, got %q", got.GetTemplate())
+	}
+	if got := drain2.Match("b c", SearchStrategyNever); got == nil {
+		t.Fatal("expected cluster 'b c' to remain after eviction")
 	}
 }
 

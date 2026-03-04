@@ -26,3 +26,9 @@ func (m *MemoryPersistence) LoadState() ([]byte, error) {
 	copy(out, m.data)
 	return out, nil
 }
+
+// ClearState clears any previously saved in-memory state.
+func (m *MemoryPersistence) ClearState() error {
+	m.data = nil
+	return nil
+}

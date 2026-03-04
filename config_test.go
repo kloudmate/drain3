@@ -1,14 +1,16 @@
 package drain3
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Drain.SimTh != 0.4 {
-		t.Fatalf("expected SimTh 0.4, got %f", cfg.Drain.SimTh)
+	if cfg.Drain.GetSimTh() != 0.4 {
+		t.Fatalf("expected SimTh 0.4, got %f", cfg.Drain.GetSimTh())
 	}
 	if cfg.Drain.Depth != 4 {
 		t.Fatalf("expected Depth 4, got %d", cfg.Drain.Depth)
@@ -36,8 +38,8 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Drain.SimTh != 0.5 {
-		t.Fatalf("expected SimTh 0.5, got %f", cfg.Drain.SimTh)
+	if cfg.Drain.GetSimTh() != 0.5 {
+		t.Fatalf("expected SimTh 0.5, got %f", cfg.Drain.GetSimTh())
 	}
 	if cfg.Drain.Depth != 5 {
 		t.Fatalf("expected Depth 5, got %d", cfg.Drain.Depth)
@@ -78,5 +80,22 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	_, err := LoadConfig("nonexistent.yaml")
 	if err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadConfigSimThZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "drain3.yaml")
+	yamlData := []byte("drain:\n  sim_th: 0\n")
+	if err := os.WriteFile(cfgPath, yamlData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Drain.GetSimTh() != 0 {
+		t.Fatalf("expected SimTh 0.0, got %f", cfg.Drain.GetSimTh())
 	}
 }

@@ -94,10 +94,8 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, err
 	}
 
-	// Apply defaults for zero values that should have defaults
-	if cfg.Drain.SimTh == 0 {
-		cfg.Drain.SimTh = 0.4
-	}
+	// Apply defaults for zero values that should have defaults.
+	// sim_th is intentionally not defaulted here so YAML can explicitly set sim_th: 0.
 	if cfg.Drain.Depth == 0 {
 		cfg.Drain.Depth = 4
 	}
@@ -118,6 +116,11 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// GetSimTh returns the configured similarity threshold.
+func (d *DrainSection) GetSimTh() float64 {
+	return d.SimTh
 }
 
 // GetParametrizeNumericTokens returns the effective value, defaulting to true if nil.
