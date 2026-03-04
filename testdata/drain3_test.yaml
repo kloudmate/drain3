@@ -1,0 +1,27 @@
+drain:
+  sim_th: 0.5
+  depth: 5
+  max_children: 50
+  max_clusters: 1000
+  extra_delimiters:
+    - "="
+    - ":"
+  param_str: "<*>"
+  parametrize_numeric_tokens: true
+
+snapshot:
+  snapshot_interval_minutes: 10
+  compress_state: false
+
+masking:
+  mask_prefix: "<"
+  mask_suffix: ">"
+  instructions:
+    - pattern: '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}'
+      mask_with: "IP"
+    - pattern: '\\b\\d+\\b'
+      mask_with: "NUM"
+
+profiling:
+  enabled: true
+  report_sec: 60
