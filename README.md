@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-    tm, _ := drain3.NewTemplateMiner(nil, nil)
+    tm, _ := drain3.New()
 
     messages := []string{
         "Failed password for user admin from 192.168.1.1 port 22",
@@ -49,22 +49,56 @@ func main() {
 - **Masking** — pre-process log messages with regex-based masking (IP addresses, numbers, etc.) before template mining
 - **Persistence** — save and restore state to/from files or custom backends (with optional zlib compression)
 - **Thread-safe** — safe for concurrent use from multiple goroutines
-- **Configurable** — YAML-based configuration with sensible defaults matching the Python Drain3 library
+- **Configurable** — functional options API or YAML config, with sensible defaults
 - **Parameter extraction** — extract variable values from log messages given a discovered template
 
 ## Configuration
 
-Create a YAML config file:
+### Functional Options (recommended)
+
+Pass options directly when creating a `TemplateMiner`:
+
+```go
+tm, err := drain3.New(
+    drain3.WithSimTh(0.5),
+    drain3.WithDepth(5),
+    drain3.WithMaxClusters(1000),
+    drain3.WithExtraDelimiters("=", ":"),
+    drain3.WithMasking(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`, "IP"),
+    drain3.WithMasking(`\b\d+\b`, "NUM"),
+    drain3.WithFilePersistence("/tmp/drain3_state.json"),
+)
+```
+
+Available options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithSimTh(float64)` | `0.4` | Similarity threshold (0.0–1.0) |
+| `WithDepth(int)` | `4` | Prefix tree depth |
+| `WithMaxChildren(int)` | `100` | Max children per tree node |
+| `WithMaxClusters(int)` | `0` | Max clusters (0 = unlimited, uses LRU eviction when set) |
+| `WithExtraDelimiters(string...)` | none | Additional characters to split tokens on |
+| `WithParamStr(string)` | `<*>` | Wildcard placeholder string |
+| `WithParametrizeNumericTokens(bool)` | `true` | Route numeric tokens to the wildcard node |
+| `WithMasking(pattern, name)` | none | Add a regex masking rule (can be called multiple times) |
+| `WithMaskPrefix(string)` | `<` | Prefix for mask tokens |
+| `WithMaskSuffix(string)` | `>` | Suffix for mask tokens |
+| `WithPersistence(PersistenceHandler)` | `nil` | Custom persistence backend |
+| `WithFilePersistence(path)` | none | File-based persistence |
+| `WithSnapshotInterval(minutes)` | `5` | Auto-save interval |
+| `WithCompressState(bool)` | `true` | Zlib compression for persisted state |
+| `WithProfiling(bool)` | `false` | Enable built-in profiler |
+
+### YAML Config (alternative)
 
 ```yaml
 drain:
-  sim_th: 0.4                    # Similarity threshold (0.0-1.0)
-  depth: 4                       # Prefix tree depth
-  max_children: 100              # Max children per tree node
-  max_clusters: 0                # Max clusters (0 = unlimited)
-  extra_delimiters:              # Additional token delimiters
-    - "="
-    - ":"
+  sim_th: 0.5
+  depth: 5
+  max_children: 100
+  max_clusters: 1000
+  extra_delimiters: ["=", ":"]
   parametrize_numeric_tokens: true
 
 snapshot:
@@ -82,15 +116,11 @@ masking:
 
 profiling:
   enabled: false
-  report_sec: 30
 ```
-
-Load and use it:
 
 ```go
 cfg, _ := drain3.LoadConfig("drain3.yaml")
-persistence := drain3.NewFilePersistence("drain3_state.json")
-tm, _ := drain3.NewTemplateMiner(persistence, cfg)
+tm, _ := drain3.New(drain3.WithConfig(cfg))
 ```
 
 ## API
@@ -100,8 +130,14 @@ tm, _ := drain3.NewTemplateMiner(persistence, cfg)
 The high-level API that integrates all components.
 
 ```go
-// Create with defaults (no persistence, no masking)
-tm, _ := drain3.NewTemplateMiner(nil, nil)
+// Create with defaults
+tm, _ := drain3.New()
+
+// Create with options
+tm, _ := drain3.New(
+    drain3.WithSimTh(0.5),
+    drain3.WithMasking(`\d+`, "NUM"),
+)
 
 // Process a log message
 result := tm.AddLogMessage("user alice logged in from 10.0.0.1")
