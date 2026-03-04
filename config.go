@@ -22,7 +22,7 @@ type DrainSection struct {
 	MaxClusters              int      `yaml:"max_clusters"`
 	ExtraDelimiters          []string `yaml:"extra_delimiters"`
 	ParamStr                 string   `yaml:"param_str"`
-	ParametrizeNumericTokens bool     `yaml:"parametrize_numeric_tokens"`
+	ParametrizeNumericTokens *bool    `yaml:"parametrize_numeric_tokens"`
 }
 
 // SnapshotSection holds persistence/snapshot configuration.
@@ -50,6 +50,9 @@ type ProfilingSection struct {
 	ReportSec int  `yaml:"report_sec"`
 }
 
+// boolPtr returns a pointer to a bool.
+func boolPtr(b bool) *bool { return &b }
+
 // DefaultConfig returns a Config with Python Drain3 defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -60,7 +63,7 @@ func DefaultConfig() *Config {
 			MaxClusters:              0,
 			ExtraDelimiters:          nil,
 			ParamStr:                 DefaultParamStr,
-			ParametrizeNumericTokens: true,
+			ParametrizeNumericTokens: boolPtr(true),
 		},
 		Snapshot: SnapshotSection{
 			SnapshotIntervalMinutes: 5,
@@ -104,6 +107,9 @@ func LoadConfig(filename string) (*Config, error) {
 	if cfg.Drain.ParamStr == "" {
 		cfg.Drain.ParamStr = DefaultParamStr
 	}
+	if cfg.Drain.ParametrizeNumericTokens == nil {
+		cfg.Drain.ParametrizeNumericTokens = boolPtr(true)
+	}
 	if cfg.Masking.MaskPrefix == "" {
 		cfg.Masking.MaskPrefix = "<"
 	}
@@ -112,4 +118,12 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// GetParametrizeNumericTokens returns the effective value, defaulting to true if nil.
+func (d *DrainSection) GetParametrizeNumericTokens() bool {
+	if d.ParametrizeNumericTokens == nil {
+		return true
+	}
+	return *d.ParametrizeNumericTokens
 }

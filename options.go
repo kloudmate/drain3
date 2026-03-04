@@ -54,7 +54,7 @@ func WithParamStr(paramStr string) Option {
 // the wildcard node in the prefix tree. Default: true.
 func WithParametrizeNumericTokens(enabled bool) Option {
 	return func(c *Config, _ *options) {
-		c.Drain.ParametrizeNumericTokens = enabled
+		c.Drain.ParametrizeNumericTokens = boolPtr(enabled)
 	}
 }
 

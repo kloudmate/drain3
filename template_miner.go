@@ -3,9 +3,8 @@ package drain3
 import (
 	"bytes"
 	"compress/zlib"
-	"encoding/json"
 	"io"
-	"sync"
+	"strconv"
 	"time"
 )
 
@@ -16,9 +15,8 @@ type AddLogMessageResult struct {
 }
 
 // TemplateMiner is the high-level API that integrates Drain, masking, persistence, and profiling.
+// Thread safety is provided by Drain's internal RWMutex — no separate lock is needed.
 type TemplateMiner struct {
-	mu sync.Mutex
-
 	Drain       *Drain
 	Config      *Config
 	Persistence PersistenceHandler
@@ -35,14 +33,20 @@ func NewTemplateMiner(persistence PersistenceHandler, config *Config) (*Template
 		config = DefaultConfig()
 	}
 
+	// Derive param_str from mask prefix/suffix like Python does
+	paramStr := config.Drain.ParamStr
+	if paramStr == "" || paramStr == DefaultParamStr {
+		paramStr = config.Masking.MaskPrefix + "*" + config.Masking.MaskSuffix
+	}
+
 	drainCfg := DrainConfig{
 		SimTh:                    config.Drain.SimTh,
 		Depth:                    config.Drain.Depth,
 		MaxChildren:              config.Drain.MaxChildren,
 		MaxClusters:              config.Drain.MaxClusters,
 		ExtraDelimiters:          config.Drain.ExtraDelimiters,
-		ParamStr:                 config.Drain.ParamStr,
-		ParametrizeNumericTokens: config.Drain.ParametrizeNumericTokens,
+		ParamStr:                 paramStr,
+		ParametrizeNumericTokens: config.Drain.GetParametrizeNumericTokens(),
 	}
 
 	drain := NewDrain(drainCfg)
@@ -88,22 +92,21 @@ func NewTemplateMiner(persistence PersistenceHandler, config *Config) (*Template
 
 // AddLogMessage processes a log message through the masking and Drain pipeline.
 func (tm *TemplateMiner) AddLogMessage(message string) *AddLogMessageResult {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
+	tm.Drain.mu.Lock()
+	defer tm.Drain.mu.Unlock()
 
 	tm.Profiler.StartSection("masking")
 	maskedContent := tm.Masker.Mask(message)
 	tm.Profiler.EndSection("masking")
 
 	tm.Profiler.StartSection("drain")
-	cluster, changeType := tm.Drain.AddLogMessage(maskedContent)
+	cluster, changeType := tm.Drain.addLogMessageUnlocked(maskedContent)
 	tm.Profiler.EndSection("drain")
 
-	// Auto-save on snapshot interval
-	if tm.Persistence != nil && changeType != ChangeNone {
-		sinceLastSave := time.Since(tm.lastSaveTime)
-		interval := time.Duration(tm.Config.Snapshot.SnapshotIntervalMinutes) * time.Minute
-		if sinceLastSave >= interval {
+	// Auto-save: on any change, or periodically
+	if tm.Persistence != nil {
+		snapshotReason := tm.getSnapshotReason(changeType, cluster.ClusterID)
+		if snapshotReason != "" {
 			tm.Profiler.StartSection("save_state")
 			_ = tm.saveStateInternal()
 			tm.Profiler.EndSection("save_state")
@@ -118,26 +121,39 @@ func (tm *TemplateMiner) AddLogMessage(message string) *AddLogMessageResult {
 
 // Match finds the best matching cluster for a log message without modifying state.
 func (tm *TemplateMiner) Match(message string, strategy SearchStrategy) *LogCluster {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
+	tm.Drain.mu.RLock()
+	defer tm.Drain.mu.RUnlock()
 
 	maskedContent := tm.Masker.Mask(message)
-	return tm.Drain.Match(maskedContent, strategy)
+	return tm.Drain.matchUnlocked(maskedContent, strategy)
+}
+
+// getSnapshotReason returns a non-empty reason if state should be saved, matching Python's logic.
+// Saves on any change, or periodically if the interval has elapsed.
+func (tm *TemplateMiner) getSnapshotReason(changeType ChangeType, clusterID int) string {
+	if changeType != ChangeNone {
+		return changeType.String() + " (" + strconv.Itoa(clusterID) + ")"
+	}
+	if time.Since(tm.lastSaveTime) >= time.Duration(tm.Config.Snapshot.SnapshotIntervalMinutes)*time.Minute {
+		return "periodic"
+	}
+	return ""
 }
 
 // SaveState persists the current Drain state.
 func (tm *TemplateMiner) SaveState() error {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
+	tm.Drain.mu.Lock()
+	defer tm.Drain.mu.Unlock()
 	return tm.saveStateInternal()
 }
 
+// saveStateInternal persists state. Caller must hold tm.Drain.mu.
 func (tm *TemplateMiner) saveStateInternal() error {
 	if tm.Persistence == nil {
 		return nil
 	}
 
-	data, err := json.Marshal(tm.Drain)
+	data, err := tm.Drain.marshalJSONUnlocked()
 	if err != nil {
 		return err
 	}
@@ -187,7 +203,9 @@ func (tm *TemplateMiner) LoadState() error {
 		}
 	}
 
-	return tm.Drain.UnmarshalState(data)
+	tm.Drain.mu.Lock()
+	defer tm.Drain.mu.Unlock()
+	return tm.Drain.unmarshalStateUnlocked(data)
 }
 
 // Clusters returns all current log clusters.

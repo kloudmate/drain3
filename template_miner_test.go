@@ -243,6 +243,88 @@ func TestTemplateMinerClusters(t *testing.T) {
 	}
 }
 
+func TestExtractParametersExactMatching(t *testing.T) {
+	inst, err := NewMaskingInstruction(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`, "IP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	masker := NewLogMasker([]*MaskingInstruction{inst}, "<", ">")
+	pe := NewParameterExtractor(masker, nil)
+
+	params := pe.ExtractParameters("connection from <IP> port <*>", "connection from 192.168.1.1 port 22", true)
+	if params == nil {
+		t.Fatal("expected params with exact matching")
+	}
+	if len(params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(params))
+	}
+	// First param should be the IP
+	foundIP := false
+	for _, p := range params {
+		if p.MaskName == "IP" && p.Value == "192.168.1.1" {
+			foundIP = true
+		}
+	}
+	if !foundIP {
+		t.Fatalf("expected to find IP=192.168.1.1, got %v", params)
+	}
+}
+
+func TestExtraDelimitersRegex(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Drain.ExtraDelimiters = []string{`[\[\]]`} // regex pattern for [ and ]
+
+	tm, err := NewTemplateMiner(nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := tm.AddLogMessage("[INFO] server started")
+	if result.Cluster.GetTemplate() != "INFO server started" {
+		t.Fatalf("expected 'INFO server started', got %q", result.Cluster.GetTemplate())
+	}
+}
+
+func TestParamStrDerivedFromMaskPrefixSuffix(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Masking.MaskPrefix = "{{"
+	cfg.Masking.MaskSuffix = "}}"
+
+	tm, err := NewTemplateMiner(nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// param_str should be {{*}} derived from mask prefix/suffix
+	if tm.Drain.ParamStr != "{{*}}" {
+		t.Fatalf("expected ParamStr '{{*}}', got %q", tm.Drain.ParamStr)
+	}
+
+	tm.AddLogMessage("user alice logged in")
+	tm.AddLogMessage("user bob logged in")
+
+	cluster := tm.Clusters()[0]
+	if cluster.GetTemplate() != "user {{*}} logged in" {
+		t.Fatalf("expected 'user {{*}} logged in', got %q", cluster.GetTemplate())
+	}
+}
+
+func TestGetTotalClusterSize(t *testing.T) {
+	tm, err := NewTemplateMiner(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tm.AddLogMessage("user alice logged in")
+	tm.AddLogMessage("user bob logged in")
+	tm.AddLogMessage("server started")
+
+	total := tm.Drain.GetTotalClusterSize()
+	if total != 3 {
+		t.Fatalf("expected total size 3, got %d", total)
+	}
+}
+
 func TestTemplateMinerProfiler(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Profiling.Enabled = true

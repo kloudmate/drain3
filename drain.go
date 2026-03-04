@@ -2,6 +2,8 @@ package drain3
 
 import (
 	"encoding/json"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -13,13 +15,14 @@ type Drain struct {
 	mu sync.RWMutex
 
 	// Configuration
-	SimTh                    float64  `json:"-"`
-	Depth                    int      `json:"-"`
-	MaxChildren              int      `json:"-"`
-	MaxClusters              int      `json:"-"`
-	ExtraDelimiters          []string `json:"-"`
-	ParamStr                 string   `json:"-"`
-	ParametrizeNumericTokens bool     `json:"-"`
+	SimTh                    float64          `json:"-"`
+	Depth                    int              `json:"-"`
+	MaxChildren              int              `json:"-"`
+	MaxClusters              int              `json:"-"`
+	ExtraDelimiters          []string         `json:"-"`
+	extraDelimiterRegexps    []*regexp.Regexp `json:"-"`
+	ParamStr                 string           `json:"-"`
+	ParametrizeNumericTokens bool             `json:"-"`
 
 	// State
 	RootNode        *Node        `json:"root_node"`
@@ -70,12 +73,24 @@ func NewDrain(cfg DrainConfig) *Drain {
 		store = newMapStore()
 	}
 
+	// Pre-compile extra delimiter regexps (Python uses re.sub for these)
+	var delimRegexps []*regexp.Regexp
+	for _, delim := range cfg.ExtraDelimiters {
+		re, err := regexp.Compile(delim)
+		if err != nil {
+			// Fallback: treat as literal string by escaping
+			re = regexp.MustCompile(regexp.QuoteMeta(delim))
+		}
+		delimRegexps = append(delimRegexps, re)
+	}
+
 	return &Drain{
 		SimTh:                    cfg.SimTh,
 		Depth:                    cfg.Depth,
 		MaxChildren:              cfg.MaxChildren,
 		MaxClusters:              cfg.MaxClusters,
 		ExtraDelimiters:          cfg.ExtraDelimiters,
+		extraDelimiterRegexps:    delimRegexps,
 		ParamStr:                 cfg.ParamStr,
 		ParametrizeNumericTokens: cfg.ParametrizeNumericTokens,
 		RootNode:                 NewNode(),
@@ -93,7 +108,12 @@ func (d *Drain) maxNodeDepth() int {
 func (d *Drain) AddLogMessage(content string) (*LogCluster, ChangeType) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	return d.addLogMessageUnlocked(content)
+}
 
+// addLogMessageUnlocked is the lock-free internal implementation.
+// Callers must hold d.mu (write lock).
+func (d *Drain) addLogMessageUnlocked(content string) (*LogCluster, ChangeType) {
 	contentTokens := d.GetContentAsTokens(content)
 
 	matchCluster := d.treeSearch(d.RootNode, contentTokens, d.SimTh, false)
@@ -139,7 +159,12 @@ func (d *Drain) AddLogMessage(content string) (*LogCluster, ChangeType) {
 func (d *Drain) Match(content string, fullSearchStrategy SearchStrategy) *LogCluster {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	return d.matchUnlocked(content, fullSearchStrategy)
+}
 
+// matchUnlocked is the lock-free internal implementation.
+// Callers must hold d.mu (at least read lock).
+func (d *Drain) matchUnlocked(content string, fullSearchStrategy SearchStrategy) *LogCluster {
 	requiredSimTh := d.SimTh
 	contentTokens := d.GetContentAsTokens(content)
 
@@ -165,9 +190,10 @@ func (d *Drain) Match(content string, fullSearchStrategy SearchStrategy) *LogClu
 }
 
 // GetContentAsTokens splits content into tokens, applying extra delimiters.
+// Extra delimiters are treated as regex patterns (matching Python's re.sub behavior).
 func (d *Drain) GetContentAsTokens(content string) []string {
-	for _, delim := range d.ExtraDelimiters {
-		content = strings.ReplaceAll(content, delim, " ")
+	for _, re := range d.extraDelimiterRegexps {
+		content = re.ReplaceAllString(content, " ")
 	}
 	return strings.Fields(content)
 }
@@ -177,7 +203,7 @@ func (d *Drain) treeSearch(rootNode *Node, tokens []string, simTh float64, inclu
 	tokenCount := len(tokens)
 
 	// First level: children are keyed by token count
-	curNode := rootNode.KeyToChildNode[intToStr(tokenCount)]
+	curNode := rootNode.KeyToChildNode[strconv.Itoa(tokenCount)]
 	if curNode == nil {
 		return nil
 	}
@@ -298,7 +324,7 @@ func (d *Drain) createTemplate(seq1, seq2 []string) []string {
 // addSeqToPrefixTree inserts a cluster into the prefix tree.
 func (d *Drain) addSeqToPrefixTree(rootNode *Node, cluster *LogCluster) {
 	tokenCount := len(cluster.LogTemplateTokens)
-	tokenCountStr := intToStr(tokenCount)
+	tokenCountStr := strconv.Itoa(tokenCount)
 
 	firstLayerNode, ok := rootNode.KeyToChildNode[tokenCountStr]
 	if !ok {
@@ -396,7 +422,7 @@ func (d *Drain) removeClusterFromNode(node *Node, clusterID int) {
 
 // getClustersIDsForSeqLen returns all cluster IDs for templates with the given token count.
 func (d *Drain) getClustersIDsForSeqLen(seqLen int) []int {
-	tokenCountStr := intToStr(seqLen)
+	tokenCountStr := strconv.Itoa(seqLen)
 	node, ok := d.RootNode.KeyToChildNode[tokenCountStr]
 	if !ok {
 		return nil
@@ -430,6 +456,17 @@ func (d *Drain) ClusterCount() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.IDToCluster.Len()
+}
+
+// GetTotalClusterSize returns the sum of all cluster sizes (total messages processed).
+func (d *Drain) GetTotalClusterSize() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	total := 0
+	for _, c := range d.IDToCluster.Values() {
+		total += c.Size
+	}
+	return total
 }
 
 // hasNumbers checks if a string contains any digit.
@@ -466,7 +503,11 @@ type drainState struct {
 func (d *Drain) MarshalJSON() ([]byte, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	return d.marshalJSONUnlocked()
+}
 
+// marshalJSONUnlocked is the lock-free version. Caller must hold at least a read lock.
+func (d *Drain) marshalJSONUnlocked() ([]byte, error) {
 	state := drainState{
 		RootNode:        d.RootNode,
 		IDToCluster:     d.IDToCluster.Values(),
@@ -479,6 +520,11 @@ func (d *Drain) MarshalJSON() ([]byte, error) {
 func (d *Drain) UnmarshalState(data []byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	return d.unmarshalStateUnlocked(data)
+}
+
+// unmarshalStateUnlocked is the lock-free version. Caller must hold d.mu write lock.
+func (d *Drain) unmarshalStateUnlocked(data []byte) error {
 
 	var state drainState
 	if err := json.Unmarshal(data, &state); err != nil {

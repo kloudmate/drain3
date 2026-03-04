@@ -1,6 +1,7 @@
 package drain3
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -27,22 +28,5 @@ func (lc *LogCluster) GetTemplate() string {
 
 // String returns a human-readable representation of the cluster.
 func (lc *LogCluster) String() string {
-	return "ID=" + intToStr(lc.ClusterID) + " : size=" + intToStr(lc.Size) + " : " + lc.GetTemplate()
-}
-
-func intToStr(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	if i < 0 {
-		return "-" + intToStr(-i)
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	return string(buf[pos:])
+	return "ID=" + strconv.Itoa(lc.ClusterID) + " : size=" + strconv.Itoa(lc.Size) + " : " + lc.GetTemplate()
 }

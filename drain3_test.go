@@ -2,6 +2,7 @@ package drain3
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -307,7 +308,7 @@ func TestDrainConcurrency(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(n int) {
 			for j := 0; j < 100; j++ {
-				drain.AddLogMessage("message from goroutine " + intToStr(n) + " iter " + intToStr(j))
+				drain.AddLogMessage("message from goroutine " + strconv.Itoa(n) + " iter " + strconv.Itoa(j))
 			}
 			done <- struct{}{}
 		}(i)

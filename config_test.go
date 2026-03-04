@@ -19,7 +19,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Drain.MaxClusters != 0 {
 		t.Fatalf("expected MaxClusters 0, got %d", cfg.Drain.MaxClusters)
 	}
-	if !cfg.Drain.ParametrizeNumericTokens {
+	if !cfg.Drain.GetParametrizeNumericTokens() {
 		t.Fatal("expected ParametrizeNumericTokens true")
 	}
 	if cfg.Snapshot.SnapshotIntervalMinutes != 5 {
